@@ -599,6 +599,7 @@ const startCountdown = async () => {
   const animationEnd = blackoutStart + 700 + 6800 + 2000; // generous buffer
   setTimeout(() => {
     stopAllAudio();
+    stopRecording(); // stop recording and trigger download
   }, animationEnd);
 };
 
@@ -645,9 +646,67 @@ const dismissWaitingScreen = () => {
   setTimeout(() => waitingScreenEl.classList.add("gone"), 950);
 };
 
+// ─── Screen recorder (captures entire show as downloadable video) ───────────
+let mediaRecorder = null;
+let recordedChunks = [];
+
+const startRecording = async () => {
+  try {
+    // Capture the visible tab/screen
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: "browser", frameRate: 30 },
+      audio: true,            // captures system audio if available
+      preferCurrentTab: true, // Chrome: prefer this tab
+    });
+
+    recordedChunks = [];
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+      ? "video/webm;codecs=vp9,opus"
+      : "video/webm";
+
+    mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) recordedChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      // Build blob and trigger download
+      const blob = new Blob(recordedChunks, { type: mimeType });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = "MEDHA26-Show.webm";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, 500);
+      // Stop all tracks so the browser recording indicator disappears
+      stream.getTracks().forEach((t) => t.stop());
+    };
+
+    mediaRecorder.start(500); // collect data every 500 ms
+    console.log("Recording started");
+  } catch (err) {
+    console.warn("Screen recording not available or denied:", err);
+  }
+};
+
+const stopRecording = () => {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+    console.log("Recording stopped — downloading video");
+  }
+};
+
 // ─── Start the show (called once Firebase says "go") ─────────────────────────
-const beginShow = () => {
+const beginShow = async () => {
   dismissWaitingScreen();
+
+  // Start recording the show (user will see a share prompt)
+  await startRecording();
 
   if (!introVideoEl) {
     startCountdown();
